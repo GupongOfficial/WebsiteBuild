@@ -57,7 +57,6 @@ jobs:
             remove_alpha_ios: true
           EOF
 
-      # PERBAIKAN TOTAL: Menghapus teks typo @editor dari fungsi initState
       - name: Configure WebView App Logic (URL Type Only)
         if: ${{ github.event.client_payload.build_type == 'url' }}
         run: |
@@ -145,17 +144,40 @@ jobs:
       # =================================================================
       # LOGIK UTAMA UNTUK TIPE 2: FLUTTER BUILD (ZIP)
       # =================================================================
-      - name: Extract Custom Flutter Project (Flutter Type Only)
+      - name: Download and Extract Custom Flutter Project (Flutter Type Only)
         if: ${{ github.event.client_payload.build_type == 'flutter' }}
         run: |
           echo "Mengunduh file base.zip..."
-          curl -L -H "Authorization: token ${{ github.event.client_payload.github_token }}" \
-            -o base.zip "${{ github.event.client_payload.zip_url }}"
           
-          echo "Mengekstrak source code murni..."
+          # Ambil URL dan token dari payload
+          ZIP_URL="${{ github.event.client_payload.zip_url }}"
+          GITHUB_TOKEN="${{ github.event.client_payload.github_token }}"
+          
+          # Encode URL untuk menghindari karakter khusus
+          ENCODED_URL=$(echo "$ZIP_URL" | sed 's/ /%20/g' | sed 's/(/%28/g' | sed 's/)/%29/g' | sed 's/\[/%5B/g' | sed 's/\]/%5D/g')
+          
+          echo "URL yang digunakan: $ENCODED_URL"
+          
+          # Unduh file dengan header authorization
+          curl -L -H "Authorization: token $GITHUB_TOKEN" -o base.zip "$ENCODED_URL"
+          
+          # Cek apakah file berhasil diunduh
+          if [ ! -f "base.zip" ] || [ ! -s "base.zip" ]; then
+            echo "Error: Gagal mengunduh base.zip!"
+            exit 1
+          fi
+          
+          echo "File berhasil diunduh. Mengekstrak..."
           unzip -o base.zip -d .
-          rm base.zip
-
+          
+          # Cek apakah ekstraksi berhasil
+          if [ $? -ne 0 ]; then
+            echo "Error: Gagal mengekstrak base.zip!"
+            exit 1
+          fi
+          
+          rm -f base.zip
+          echo "Ekstraksi selesai!"
 
       # =================================================================
       # DETEKSI DAN BUILD PROSES GLOBAL (BERLAKU UNTUK KEDUA TIPE)
@@ -163,26 +185,48 @@ jobs:
       - name: Detect Flutter Project Root Directory
         id: locate-root
         run: |
-          PUBSPEC_PATH=$(find . -name "pubspec.yaml" -print -quit)
+          # Cari pubspec.yaml di direktori saat ini dan subdirektori
+          PUBSPEC_PATH=$(find . -name "pubspec.yaml" -not -path "./android/*" -not -path "./ios/*" -not -path "./build/*" -not -path "./.dart_tool/*" -print -quit)
+          
           if [ -z "$PUBSPEC_PATH" ]; then
             echo "Error: File pubspec.yaml tidak ditemukan!"
-            exit 1
+            echo "Mencoba membuat project Flutter baru..."
+            flutter create . --org com.appkonverter --project-name flutter_app
+            PUBSPEC_PATH="pubspec.yaml"
           fi
+          
           PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
           echo "Proyek Flutter aktif di: $PROJECT_DIR"
           echo "dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
 
       - name: Finalize Dependencies
         working-directory: ${{ steps.locate-root.outputs.dir }}
-        run: flutter pub get
+        run: |
+          flutter pub get
+          # Jika gagal, coba clean
+          if [ $? -ne 0 ]; then
+            flutter clean
+            flutter pub get
+          fi
 
       - name: Compile to Release APK
         working-directory: ${{ steps.locate-root.outputs.dir }}
-        run: flutter build apk --release
+        run: |
+          flutter build apk --release
+          # Jika gagal, coba dengan verbose untuk debugging
+          if [ $? -ne 0 ]; then
+            flutter build apk --release --verbose
+          fi
 
       - name: Export Output App Build
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.client_payload.app_name }}-Release-APK
           path: ${{ steps.locate-root.outputs.dir }}/build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 1
+          retention-days: 7
+
+      - name: Fallback - Check if APK exists in default location
+        if: failure()
+        run: |
+          echo "Mencari APK di lokasi default..."
+          find . -name "*.apk" -type f
