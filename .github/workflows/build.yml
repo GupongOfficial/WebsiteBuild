@@ -1,0 +1,89 @@
+name: Web2APK Builder
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL Website'
+        required: true
+        default: 'https://example.com'
+      app_name:
+        description: 'App Name'
+        required: true
+        default: 'MyApp'
+      package_name:
+        description: 'Package Name'
+        required: true
+        default: 'com.example.myapp'
+      user_id:
+        description: 'User ID'
+        required: false
+        default: 'web_user'
+      build_type:
+        description: 'Build Type (webview/flutter)'
+        required: true
+        default: 'webview'
+      flutter_repo:
+        description: 'Flutter Repository URL'
+        required: false
+        default: ''
+      icon:
+        description: 'Icon Base64'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Setup Flutter (if Flutter build)
+      if: ${{ github.event.inputs.build_type == 'flutter' }}
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.16.0'
+
+    - name: Build WebView APK
+      if: ${{ github.event.inputs.build_type == 'webview' }}
+      run: |
+        echo "📂 Creating WebView project..."
+        # ... (kode WebView seperti sebelumnya)
+
+    - name: Build Flutter APK
+      if: ${{ github.event.inputs.build_type == 'flutter' }}
+      run: |
+        echo "💙 Building Flutter APK..."
+        if [ -n "${{ github.event.inputs.flutter_repo }}" ]; then
+          git clone "${{ github.event.inputs.flutter_repo }}" flutter_app
+          cd flutter_app
+        else
+          flutter create --org com.example flutter_app
+          cd flutter_app
+        fi
+        
+        flutter pub get
+        flutter build apk --release
+        
+        echo "APK_PATH=flutter_app/build/app/outputs/apk/release/app-release.apk" >> $GITHUB_ENV
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ github.event.inputs.app_name }}-APK
+        path: |
+          **/build/outputs/apk/debug/*.apk
+          **/build/app/outputs/apk/release/*.apk
