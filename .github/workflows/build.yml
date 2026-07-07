@@ -58,7 +58,7 @@ jobs:
             remove_alpha_ios: true
           EOF
 
-      # Mengunci string URL mentah murni 100% dari payload website tanpa modifikasi regex/slash
+      # Mengunci string URL mentah murni 100% dari payload website tanpa modifikasi
       - name: Configure WebView App Logic (URL Type Only)
         if: ${{ github.event.client_payload.build_type == 'url' }}
         run: |
@@ -119,8 +119,6 @@ jobs:
       # =================================================================
       # LOGIK UTAMA UNTUK TIPE 2: FLUTTER BUILD (ZIP)
       # =================================================================
-      # Hanya mengekstrak tanpa mengubah konfigurasi nama, ikon, atau kode apapun di dalam ZIP
-       Cavat: Ekstraksi dilakukan langsung ke root workspace
       - name: Extract Custom Flutter Project (Flutter Type Only)
         if: ${{ github.event.client_payload.build_type == 'flutter' }}
         run: |
