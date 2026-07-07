@@ -17,30 +17,51 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      # Menggunakan Flutter versi stabil yang dijamin kompetibel dengan webview
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # MENCIPTAKAN PROYEK FLUTTER OTOMATIS JIKA BELUM ADA DI GITHUB
-      - name: Auto Create Flutter Project
+      # =================================================================
+      # LOGIK UTAMA UNTUK TIPE 1: URL BUILD (WEBVIEW)
+      # =================================================================
+      - name: Auto Create Flutter Project (URL Type Only)
+        if: ${{ github.event.client_payload.build_type == 'url' }}
         run: |
           if [ ! -f "pubspec.yaml" ]; then
-            echo "Mendeteksi repositori kosong. Membuat template proyek Flutter..."
             flutter create . --org com.appkonverter --project-name webview_app
           fi
 
-      # MENGONFIGURASI APLIKASI WEBVIEW BERDASARKAN INPUT DARI WEBSITE
-      - name: Configure WebView App
+      - name: Configure App Name and Launcher Icon (URL Type Only)
+        if: ${{ github.event.client_payload.build_type == 'url' }}
         run: |
-          echo "Membuat aplikasi WebView untuk: ${{ github.event.client_payload.app_name }}"
+          ICON_URL="${{ github.event.client_payload.app_icon }}"
           
-          # Menambahkan library WebView resmi ke dalam proyek
+          # Tambahkan tools modifikasi manifest sistem untuk mode URL
+          flutter pub add rename_app --dev
+          flutter pub add flutter_launcher_icons --dev
           flutter pub add webview_flutter
-          
-          # Membuat ulang file main.dart dengan pengaturan URL dari website Anda
+
+          mkdir -p assets
+          if [ ! -z "$ICON_URL" ]; then
+            curl -L -o assets/icon.png "$ICON_URL"
+          else
+            cp android/app/src/main/res/mipmap-mdpi/ic_launcher.png assets/icon.png
+          fi
+
+          cat << 'EOF' > flutter_launcher_icons.yaml
+          flutter_launcher_icons:
+            android: "launcher_icon"
+            ios: true
+            image_path: "assets/icon.png"
+            remove_alpha_ios: true
+          EOF
+
+      # Mengunci string URL mentah murni 100% dari payload website tanpa modifikasi regex/slash
+      - name: Configure WebView App Logic (URL Type Only)
+        if: ${{ github.event.client_payload.build_type == 'url' }}
+        run: |
           cat << 'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:webview_flutter/webview_flutter.dart';
@@ -73,7 +94,7 @@ jobs:
               super.initState();
               _controller = WebViewController()
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
-                ..loadRequest(Uri.parse('${{ github.event.client_payload.url_link }}'));
+                ..loadRequest(Uri.parse('${{ github.event.client_payload.url_link }}')); // URL MURNI SESUAI WEBSITE
             }
 
             @override
@@ -87,17 +108,57 @@ jobs:
           }
           EOF
 
-      # PROSES INSTALASI DAN BUILD APK DI SERVER GITHUB
-      - name: Install Dependencies
+      - name: Apply System Modifications (URL Type Only)
+        if: ${{ github.event.client_payload.build_type == 'url' }}
+        run: |
+          flutter pub get
+          dart run rename_app:main all="${{ github.event.client_payload.app_name }}"
+          dart run flutter_launcher_icons
+
+
+      # =================================================================
+      # LOGIK UTAMA UNTUK TIPE 2: FLUTTER BUILD (ZIP)
+      # =================================================================
+      # Hanya mengekstrak tanpa mengubah konfigurasi nama, ikon, atau kode apapun di dalam ZIP
+       Cavat: Ekstraksi dilakukan langsung ke root workspace
+      - name: Extract Custom Flutter Project (Flutter Type Only)
+        if: ${{ github.event.client_payload.build_type == 'flutter' }}
+        run: |
+          echo "Mengunduh file base.zip..."
+          curl -L -H "Authorization: token ${{ github.event.client_payload.github_token }}" \
+            -o base.zip "${{ github.event.client_payload.zip_url }}"
+          
+          echo "Mengekstrak source code murni..."
+          unzip -o base.zip -d .
+          rm base.zip
+
+
+      # =================================================================
+      # DETEKSI DAN BUILD PROSES GLOBAL (BERLAKU UNTUK KEDUA TIPE)
+      # =================================================================
+      - name: Detect Flutter Project Root Directory
+        id: locate-root
+        run: |
+          PUBSPEC_PATH=$(find . -name "pubspec.yaml" -print -quit)
+          if [ -z "$PUBSPEC_PATH" ]; then
+            echo "Error: File pubspec.yaml tidak ditemukan!"
+            exit 1
+          fi
+          PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
+          echo "Proyek Flutter aktif di: $PROJECT_DIR"
+          echo "dir=$PROJECT_DIR" >> $GITHUB_OUTPUT
+
+      - name: Finalize Dependencies
+        working-directory: ${{ steps.locate-root.outputs.dir }}
         run: flutter pub get
 
-      - name: Build Android APK
+      - name: Compile to Release APK
+        working-directory: ${{ steps.locate-root.outputs.dir }}
         run: flutter build apk --release
 
-      # MENGIRIMKAN HASIL JADI KE HALAMAN ACTIONS UNTUK DI-DOWNLOAD
-      - name: Upload APK Release
+      - name: Export Output App Build
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.client_payload.app_name }}-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: ${{ github.event.client_payload.app_name }}-Release-APK
+          path: ${{ steps.locate-root.outputs.dir }}/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 1
