@@ -1,89 +1,103 @@
-name: Web2APK Builder
+name: Automated App Builder
 
 on:
-  push:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
-    inputs:
-      url:
-        description: 'URL Website'
-        required: true
-        default: 'https://example.com'
-      app_name:
-        description: 'App Name'
-        required: true
-        default: 'MyApp'
-      package_name:
-        description: 'Package Name'
-        required: true
-        default: 'com.example.myapp'
-      user_id:
-        description: 'User ID'
-        required: false
-        default: 'web_user'
-      build_type:
-        description: 'Build Type (webview/flutter)'
-        required: true
-        default: 'webview'
-      flutter_repo:
-        description: 'Flutter Repository URL'
-        required: false
-        default: ''
-      icon:
-        description: 'Icon Base64'
-        required: false
-        default: ''
+  repository_dispatch:
+    types: [trigger-build]
 
 jobs:
-  build:
+  build-app:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Setup Java
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
 
-    - name: Setup Flutter (if Flutter build)
-      if: ${{ github.event.inputs.build_type == 'flutter' }}
-      uses: subosito/flutter-action@v2
-      with:
-        flutter-version: '3.16.0'
+      # --- PROSES UNTUK TIPE: URL (WEBVIEW) ---
+      - name: Configure WebView App
+        if: ${{ github.event.client_payload.build_type == 'url' }}
+        run: |
+          echo "Membuat aplikasi WebView untuk: ${{ github.event.client_payload.app_name }}"
+          
+          # 1. Tambahkan dependency webview
+          flutter pub add webview_flutter
+          
+          # 2. Inject URL dan Nama Aplikasi ke main.dart
+          cat << 'EOF' > lib/main.dart
+          import 'package:flutter/material.dart';
+          import 'package:webview_flutter/webview_flutter.dart';
 
-    - name: Build WebView APK
-      if: ${{ github.event.inputs.build_type == 'webview' }}
-      run: |
-        echo "📂 Creating WebView project..."
-        # ... (kode WebView seperti sebelumnya)
+          void main() => runApp(const MyApp());
 
-    - name: Build Flutter APK
-      if: ${{ github.event.inputs.build_type == 'flutter' }}
-      run: |
-        echo "💙 Building Flutter APK..."
-        if [ -n "${{ github.event.inputs.flutter_repo }}" ]; then
-          git clone "${{ github.event.inputs.flutter_repo }}" flutter_app
-          cd flutter_app
-        else
-          flutter create --org com.example flutter_app
-          cd flutter_app
-        fi
-        
-        flutter pub get
-        flutter build apk --release
-        
-        echo "APK_PATH=flutter_app/build/app/outputs/apk/release/app-release.apk" >> $GITHUB_ENV
+          class MyApp extends StatelessWidget {
+            const MyApp({super.key});
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: '${{ github.event.client_payload.app_name }}',
+                debugShowCheckedModeBanner: false,
+                home: const WebViewScreen(),
+              );
+            }
+          }
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ github.event.inputs.app_name }}-APK
-        path: |
-          **/build/outputs/apk/debug/*.apk
-          **/build/app/outputs/apk/release/*.apk
+          class WebViewScreen extends StatefulWidget {
+            const WebViewScreen({super.key});
+            @override
+            State<WebViewScreen> createState() => _WebViewScreenState();
+          }
+
+          class _WebViewScreenState extends State<WebViewScreen> {
+            late final WebViewController _controller;
+
+            @override
+            void main() {
+              super.main();
+              _controller = WebViewController()
+                ..setJavaScriptMode(JavaScriptMode.unrestricted)
+                ..loadRequest(Uri.parse('${{ github.event.client_payload.url_link }}'));
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: SafeArea(child: WebViewWidget(controller: _controller)),
+              );
+            }
+          }
+          EOF
+
+      # --- PROSES UNTUK TIPE: FLUTTER (ZIP SOURCE) ---
+      - name: Extract Flutter Source Code
+        if: ${{ github.event.client_payload.build_type == 'flutter' }}
+        run: |
+          echo "Mengunduh dan mengekstrak source code Flutter..."
+          curl -L -H "Authorization: token ${{ github.event.client_payload.github_token }}" \
+            -o base.zip "${{ github.event.client_payload.zip_url }}"
+          unzip -o base.zip -d .
+          rm base.zip
+
+      # --- PROSES BUILD UTAMA ---
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Android APK
+        run: flutter build apk --release
+
+      # --- GENERATE LINK DOWNLOAD VIA ARTIFACT ---
+      - name: Upload APK Release
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.client_payload.app_name }}-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 1
