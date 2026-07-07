@@ -57,7 +57,7 @@ jobs:
             remove_alpha_ios: true
           EOF
 
-      # PERBAIKAN TOTAL: Menggunakan metode Uri.http atau Uri.https secara terpisah berdasarkan input murni website
+      # INTEGRASI LOGIKA POTONG SLASH SESUAI PERMINTAAN ANDA
       - name: Configure WebView App Logic (URL Type Only)
         if: ${{ github.event.client_payload.build_type == 'url' }}
         run: |
@@ -88,46 +88,32 @@ jobs:
           class _WebViewScreenState extends State<WebViewScreen> {
             late final WebViewController _controller;
 
-            @override
+            // Logika fungsi pemotongan murni milik Anda
+            String urlMurni(String url) {
+              return url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+            }
+
+            @editor
             void initState() {
               super.initState();
               
-              // Mengurai URL secara manual di sisi aplikasi untuk mengunci keaslian skema dan port
-              String inputUrl = '${{ github.event.client_payload.url_link }}';
-              Uri finalUri;
-              
-              try {
-                // Bersihkan spasi kosong jika ada bawaan copy-paste dari website
-                inputUrl = inputUrl.trim();
-                
-                if (inputUrl.startsWith('https://')) {
-                  String clean = inputUrl.replaceFirst('https://', '');
-                  List<String> parts = clean.split(':');
-                  if (parts.length > 1) {
-                    finalUri = Uri.https(parts[0], '', {'port': parts[1]});
-                  } else {
-                    finalUri = Uri.parse(inputUrl);
-                  }
-                } else if (inputUrl.startsWith('http://')) {
-                  String clean = inputUrl.replaceFirst('http://', '');
-                  // Pisahkan alamat domain/IP dengan port (:2669)
-                  List<String> parts = clean.split(':');
-                  if (parts.length > 1) {
-                    // Paksa skema HTTP murni dengan port yang akurat tanpa slash tambahan
-                    finalUri = Uri(scheme: 'http', host: parts[0], port: int.parse(parts[1]));
-                  } else {
-                    finalUri = Uri(scheme: 'http', host: clean);
-                  }
-                } else {
-                  finalUri = Uri.parse(inputUrl);
-                }
-              } catch (e) {
-                finalUri = Uri.parse(inputUrl);
-              }
+              final String inputUrl = '${{ github.event.client_payload.url_link }}';
+              final String urlAwal = urlMurni(inputUrl);
               
               _controller = WebViewController()
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
-                ..loadRequest(finalUri); 
+                ..setNavigationDelegate(
+                  NavigationDelegate(
+                    onNavigationRequest: (NavigationRequest request) {
+                      if (request.url.endsWith('/')) {
+                        _controller.loadRequest(Uri.parse(urlMurni(request.url)));
+                        return NavigationDecision.prevent;
+                      }
+                      return NavigationDecision.navigate;
+                    },
+                  ),
+                )
+                ..loadRequest(Uri.parse(urlAwal));
             }
 
             @override
@@ -141,13 +127,11 @@ jobs:
           }
           EOF
 
-      # FIX TAMBAHAN: Membuka izin HTTP murni (usesCleartextTraffic) agar panel non-SSL bisa dimuat sempurna oleh Android
       - name: Inject Network & Manifest Configuration (URL Type Only)
         if: ${{ github.event.client_payload.build_type == 'url' }}
         run: |
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
           if [ -f "$MANIFEST_PATH" ]; then
-            # Sisipkan parameter izin koneksi HTTP biasa/cleartext ke dalam tag <application>
             sed -i 's/<application/<application android:usesCleartextTraffic="true"/g' "$MANIFEST_PATH"
           fi
 
