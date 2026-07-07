@@ -57,7 +57,7 @@ jobs:
             remove_alpha_ios: true
           EOF
 
-      # INTEGRASI LOGIKA POTONG SLASH SESUAI PERMINTAAN ANDA
+      # PERBAIKAN TOTAL: Menghapus teks typo @editor dari fungsi initState
       - name: Configure WebView App Logic (URL Type Only)
         if: ${{ github.event.client_payload.build_type == 'url' }}
         run: |
@@ -88,12 +88,11 @@ jobs:
           class _WebViewScreenState extends State<WebViewScreen> {
             late final WebViewController _controller;
 
-            // Logika fungsi pemotongan murni milik Anda
             String urlMurni(String url) {
               return url.endsWith('/') ? url.substring(0, url.length - 1) : url;
             }
 
-            @editor
+            @override
             void initState() {
               super.initState();
               
