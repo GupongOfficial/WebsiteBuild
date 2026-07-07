@@ -17,22 +17,30 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
+      # Menggunakan Flutter versi stabil yang dijamin kompetibel dengan webview
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # --- PROSES UNTUK TIPE: URL (WEBVIEW) ---
+      # MENCIPTAKAN PROYEK FLUTTER OTOMATIS JIKA BELUM ADA DI GITHUB
+      - name: Auto Create Flutter Project
+        run: |
+          if [ ! -f "pubspec.yaml" ]; then
+            echo "Mendeteksi repositori kosong. Membuat template proyek Flutter..."
+            flutter create . --org com.appkonverter --project-name webview_app
+          fi
+
+      # MENGONFIGURASI APLIKASI WEBVIEW BERDASARKAN INPUT DARI WEBSITE
       - name: Configure WebView App
-        if: ${{ github.event.client_payload.build_type == 'url' }}
         run: |
           echo "Membuat aplikasi WebView untuk: ${{ github.event.client_payload.app_name }}"
           
-          # 1. Tambahkan dependency webview
+          # Menambahkan library WebView resmi ke dalam proyek
           flutter pub add webview_flutter
           
-          # 2. Inject URL dan Nama Aplikasi ke main.dart
+          # Membuat ulang file main.dart dengan pengaturan URL dari website Anda
           cat << 'EOF' > lib/main.dart
           import 'package:flutter/material.dart';
           import 'package:webview_flutter/webview_flutter.dart';
@@ -61,8 +69,8 @@ jobs:
             late final WebViewController _controller;
 
             @override
-            void main() {
-              super.main();
+            void initState() {
+              super.initState();
               _controller = WebViewController()
                 ..setJavaScriptMode(JavaScriptMode.unrestricted)
                 ..loadRequest(Uri.parse('${{ github.event.client_payload.url_link }}'));
@@ -71,30 +79,22 @@ jobs:
             @override
             Widget build(BuildContext context) {
               return Scaffold(
-                body: SafeArea(child: WebViewWidget(controller: _controller)),
+                body: SafeArea(
+                  child: WebViewWidget(controller: _controller),
+                ),
               );
             }
           }
           EOF
 
-      # --- PROSES UNTUK TIPE: FLUTTER (ZIP SOURCE) ---
-      - name: Extract Flutter Source Code
-        if: ${{ github.event.client_payload.build_type == 'flutter' }}
-        run: |
-          echo "Mengunduh dan mengekstrak source code Flutter..."
-          curl -L -H "Authorization: token ${{ github.event.client_payload.github_token }}" \
-            -o base.zip "${{ github.event.client_payload.zip_url }}"
-          unzip -o base.zip -d .
-          rm base.zip
-
-      # --- PROSES BUILD UTAMA ---
+      # PROSES INSTALASI DAN BUILD APK DI SERVER GITHUB
       - name: Install Dependencies
         run: flutter pub get
 
       - name: Build Android APK
         run: flutter build apk --release
 
-      # --- GENERATE LINK DOWNLOAD VIA ARTIFACT ---
+      # MENGIRIMKAN HASIL JADI KE HALAMAN ACTIONS UNTUK DI-DOWNLOAD
       - name: Upload APK Release
         uses: actions/upload-artifact@v4
         with:
